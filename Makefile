@@ -146,18 +146,19 @@ DEPENDS	:=	$(OFILES:.o=.d)
 #---------------------------------------------------------------------------------
 ifeq ($(strip $(NO_SMDH)),)
 .PHONY: all
-all	:	$(OUTPUT).3dsx $(OUTPUT).smdh $(OUTPUT).cia
+#all	:	$(OUTPUT).3dsx $(OUTPUT).smdh $(OUTPUT).cia
+all    :       $(OUTPUT).smdh $(OUTPUT).cia
 endif
 $(OUTPUT).3dsx	:	$(OUTPUT).elf
 $(OUTPUT).elf	:	$(OFILES)
 
-$(OUTPUT)_banner.bnr: $(TOPDIR)/meta/banner.png $(TOPDIR)/meta/audio.wav
-	bannertool makebanner -i $(TOPDIR)/meta/banner.png -a $(TOPDIR)/meta/audio.wav -o $(OUTPUT)_banner.bnr
+banner.bnr: $(TOPDIR)/meta/banner.png $(TOPDIR)/meta/audio.wav
+	@bannertool makebanner -i $(TOPDIR)/meta/banner.png -a $(TOPDIR)/meta/audio.wav -o banner.bnr
 
-$(OUTPUT).cia: $(OUTPUT).elf $(OUTPUT)_banner.bnr $(OUTPUT).smdh
+$(OUTPUT).cia: $(OUTPUT).elf banner.bnr $(OUTPUT).smdh
 	@cp $(OUTPUT).elf $(TARGET)_stripped.elf
 	@$(PREFIX)strip $(TARGET)_stripped.elf
-	makerom -f cia -o $(OUTPUT).cia -rsf $(TOPDIR)/meta/cia.rsf -target t -exefslogo -elf $(TARGET)_stripped.elf -icon $(OUTPUT).smdh -banner $(OUTPUT)_banner.bnr
+	@makerom -f cia -o $(OUTPUT).cia -rsf $(TOPDIR)/meta/cia.rsf -target t -exefslogo -elf $(TARGET)_stripped.elf -icon $(OUTPUT).smdh -banner banner.bnr
 	@echo "built ... $(notdir $@)"
 
 #---------------------------------------------------------------------------------------
