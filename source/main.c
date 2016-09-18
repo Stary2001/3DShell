@@ -18,7 +18,6 @@ int do_cmd(int client_fd)
 	r = recv(client_fd, &cmd, 1, 0);
 	if(r == 0 || r == -1)
 	{
-		printf("recv error\n");
 		return -1;
 	}
 	else
@@ -29,27 +28,30 @@ int do_cmd(int client_fd)
 	return 0;
 }
 
-/*void compact(struct pollfd *fds, int *nfds)
+void compact(struct pollfd *fds, int *nfds)
 {
-	int tail = -1;
+	int new_fds[MAX_CONN];
+	int n = 0;
 
 	for(int i = 0; i < *nfds; i++)
 	{
 		if(fds[i].fd != -1)
 		{
-			if(i != 0 && tail != i-1)
-			{
-				tail++;
-				fds[tail].fd = fds[i].fd;
-				fds[i].fd = -1;
-			}
-			else
-			{
-				tail = i;
-			}
+			new_fds[n++] = fds[i].fd;
 		}
 	}
-}*/
+
+	for(int i = 0; i < n; i++)
+	{
+		fds[i].fd = new_fds[i];
+	}
+	*nfds = n;
+}
+
+void poll_close(int fd, struct pollfd *fds, int *nfds)
+{
+
+}
 
 int running = 1;
 void sock_thread(void *arg)
@@ -151,19 +153,27 @@ void sock_thread(void *arg)
 				}
 				else
 				{
-					if(do_cmd(fds[i].fd))
+					r = do_cmd(fds[i].fd);
+					if(r == 1)
 					{
 						printf("stopping...\n");
 						running = 0;
 					}
+					else if(r == -1)
+					{
+						printf("closing %i slot %i\n", fds[i].fd, i);
+						close(fds[i].fd);
+						fds[i].fd = -1;
+						compact(fds, &nfds);
+					}
 				}
 			}
-			else if((fds[i].revents & POLLERR) || (fds[i].revents & POLLNVAL))
+			else if(fds[i].revents & POLLERR)
 			{
 				printf("closing %i slot %i\n", fds[i].fd, i);
 				close(fds[i].fd);
 				fds[i].fd = -1;
-				//compact(fds, &nfds);
+				compact(fds, &nfds);
 
 				if(i == 0) break;
 			}
