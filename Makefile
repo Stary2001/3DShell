@@ -35,6 +35,7 @@ APP_TITLE	:=	3DShell
 APP_DESCRIPTION :=	It tests stuff.
 APP_AUTHOR	:=	Stary2001
 ICON		:=	meta/icon.png
+NO_3DSX		:=	yes
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -144,21 +145,27 @@ DEPENDS	:=	$(OFILES:.o=.d)
 #---------------------------------------------------------------------------------
 # main targets
 #---------------------------------------------------------------------------------
-ifeq ($(strip $(NO_SMDH)),)
+ifeq ($(strip $(NO_3DSX)),)
 .PHONY: all
-#all	:	$(OUTPUT).3dsx $(OUTPUT).smdh $(OUTPUT).cia
-all    :       $(OUTPUT).smdh $(OUTPUT).cia
+all	:	$(OUTPUT).3dsx $(OUTPUT).smdh $(OUTPUT).cia
+else
+.PHONY: all
+all    :       $(OUTPUT).cia
 endif
+
 $(OUTPUT).3dsx	:	$(OUTPUT).elf
 $(OUTPUT).elf	:	$(OFILES)
+
+icon.icn: $(TOPDIR)/meta/icon.png
+	@bannertool makesmdh -i $(TOPDIR)/meta/icon.png -s $(APP_TITLE) -l $(APP_DESCRIPTION) -p $(APP_AUTHOR) -o icon.icn
 
 banner.bnr: $(TOPDIR)/meta/banner.png $(TOPDIR)/meta/audio.wav
 	@bannertool makebanner -i $(TOPDIR)/meta/banner.png -a $(TOPDIR)/meta/audio.wav -o banner.bnr
 
-$(OUTPUT).cia: $(OUTPUT).elf banner.bnr $(OUTPUT).smdh
+$(OUTPUT).cia: $(OUTPUT).elf banner.bnr icon.icn
 	@cp $(OUTPUT).elf $(TARGET)_stripped.elf
 	@$(PREFIX)strip $(TARGET)_stripped.elf
-	@makerom -f cia -o $(OUTPUT).cia -rsf $(TOPDIR)/meta/cia.rsf -target t -exefslogo -elf $(TARGET)_stripped.elf -icon $(OUTPUT).smdh -banner banner.bnr
+	@makerom -f cia -o $(OUTPUT).cia -rsf $(TOPDIR)/meta/cia.rsf -target t -exefslogo -elf $(TARGET)_stripped.elf -icon icon.icn -banner banner.bnr
 	@echo "built ... $(notdir $@)"
 
 #---------------------------------------------------------------------------------------
