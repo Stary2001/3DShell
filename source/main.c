@@ -48,11 +48,6 @@ void compact(struct pollfd *fds, int *nfds)
 	*nfds = n;
 }
 
-void poll_close(int fd, struct pollfd *fds, int *nfds)
-{
-
-}
-
 int running = 1;
 void sock_thread(void *arg)
 {
@@ -192,6 +187,8 @@ void sock_thread(void *arg)
 	free(fds);
 
 	socExit();
+	free(soc_buff);
+	
 	acExit();
 	svcExitThread();
 }
