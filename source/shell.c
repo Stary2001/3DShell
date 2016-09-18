@@ -43,7 +43,7 @@ int shell_cmd(int fd, u8 type)
 		case 0x01: // proc
 			send_success(fd, 1, 0);
 		break;
-		
+
 		case 0x02: // peek
 			send_success(fd, 2, 0);
 		break;

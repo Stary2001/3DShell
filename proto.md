@@ -1,6 +1,6 @@
 # Client to Server
 
-# 0x00 Hello
+## 0x00 Hello
 
 | Off   | Type     | Value    |
 |-------|----------|----------|
@@ -8,20 +8,20 @@
 | 0x1   | u8       | len      |
 | 0x2   | u8[len]  | name     |
 
-# 0x01 Proc
+## 0x01 Proc
 | Off   | Type     | Value    |
 |-------|----------|----------|
 | 0x0   | u8       | flags    |
 | 0x1   | u32      | pid      |
 
-# 0x02 Peek
+## 0x02 Peek
 | Off   | Type     | Value    |
 |-------|----------|----------|
 | 0x0   | u8       | flags    |
 | 0x1   | u32      | src      |
 | 0x5   | u32      | len      |
 
-# 0x03 Poke
+## 0x03 Poke
 | Off   | Type      | Value    |
 |-------|-----------|----------|
 | 0x0   | u8        | flags    |
@@ -31,25 +31,31 @@
 
 # Server to Client
 
-# 0x00 Hello
+## 0x00 Hello
 
 | Off   | Type     | Value    |
 |-------|----------|----------|
 | 0x0   | u8       | success  |
 
-# 0x01 Proc
+## 0x01 Proc
 | Off   | Type     | Value    |
 |-------|----------|----------|
 | 0x0   | u8       | success  |
 
-# 0x02 Peek
+## 0x02 Peek
 | Off   | Type     | Value    |
 |-------|----------|----------|
 | 0x0   | u8       | success  |
 | 0x1   | u32      | len      |
 | 0x5   | u8[len]  | data     |
 
-# 0x03 Poke
+or if success == 0:
+
+| Off   | Type     | Value    |
+|-------|----------|----------|
+| 0x0   | u8       | success  |
+
+## 0x03 Poke
 | Off   | Type      | Value    |
 |-------|-----------|----------|
 | 0x0   | u8        | success  |
