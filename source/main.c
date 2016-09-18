@@ -163,7 +163,7 @@ void sock_thread(void *arg)
 					}
 				}
 			}
-			else if(fds[i].revents & POLLERR)
+			else if(fds[i].revents & POLLERR || fds[i].revents & POLLHUP)
 			{
 				printf("closing %i slot %i\n", fds[i].fd, i);
 				close(fds[i].fd);
@@ -188,7 +188,7 @@ void sock_thread(void *arg)
 
 	socExit();
 	free(soc_buff);
-	
+
 	acExit();
 	svcExitThread();
 }
