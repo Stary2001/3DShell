@@ -2,55 +2,68 @@
 #include <scenic/proc.h>
 #include <scenic/kernel/kproc.h>
 #include <scenic/kernel/kmem.h>
+#include "shell.h"
 
 #define checked_recv(fd, v, l) if((r=read(fd, v, l, 0)) == -1) { return -1; }
 #define VER 0
 
-int send_success(int fd, u8 type, u8 success)
-{
-	send(fd, &type, 1, 0);
-	send(fd, &success, 1, 0);
-}
-
-
-int shell_cmd(int fd, u8 type)
+int process_cmd(int fd, struct client_ctx *ctx)
 {
 	int r = 0;
 
-	printf("got shell command %02x\n", type);
-	switch(type)
+	printf("trying to recv %i bytes\n", SCRATCH_LENGTH - ctx->scratch_len); 
+	r = recv(fd, ctx->scratch + ctx->scratch_len, SCRATCH_LENGTH - ctx->scratch_len, 0);
+	if(r == 0)
 	{
-		case 0x00: // hello
-		{
-			u8 ver;
-			checked_recv(fd, &ver, 1);
-			if(ver > VER)
-			{
-				send_success(fd, 0, 1);
-				return -1;
-			}
-			u8 len;
-			checked_recv(fd, &len, 1);
-			char buf[256];
-			checked_recv(fd, buf, len);
-			buf[len] = 0;
-			printf("hello from %s\n", buf);
-
-			send_success(fd, 0, 1);
-		}
-		break;
-
-		case 0x01: // proc
-			send_success(fd, 1, 0);
-		break;
-
-		case 0x02: // peek
-			send_success(fd, 2, 0);
-		break;
-
-		case 0x03: // poke
-			send_success(fd, 3, 0);
-		break;
+		return -1;
 	}
+	if(r == -1)
+	{
+		return -1;
+	}
+
+	printf("got %i bytes\n", r);
+
+	ctx->scratch_len += r;
+
+	char *line_end = NULL;
+	bool found = false;
+	uint32_t len = 0;
+	char *last_line_end = NULL;
+
+	while(true)
+	{
+		last_line_end = line_end;
+		line_end = (char*)memmem(ctx->scratch + ctx->scratch_off, SCRATCH_LENGTH - ctx->scratch_off, "\n", 1);
+		if(line_end == NULL)
+		{
+			if(found)
+			{
+				len = ctx->scratch_len - (uint32_t)(last_line_end+1 - ctx->scratch);
+				memmove(ctx->scratch, last_line_end + 1, len);
+				memset(ctx->scratch + len, 0, SCRATCH_LENGTH - len);
+				ctx->scratch_off = 0;
+				ctx->scratch_len = len;
+			}
+			else
+			{
+				// oh no. 
+				printf("more bytes are available\n");
+				return -1; // todo: fix by growing buffer / doing memmem again.
+			}
+			break;
+		}
+
+		found = true;
+		len = (uint32_t)(line_end - ctx->scratch) - ctx->scratch_off;
+
+		*(ctx->scratch + ctx->scratch_off + len) = 0;
+		printf("found line %s %i long\n", ctx->scratch + ctx->scratch_off, len);
+		*(ctx->scratch + ctx->scratch_off + len) = '\n';
+
+		len += 1;
+		ctx->scratch_off += len;
+	}
+
 	return 0;
 }

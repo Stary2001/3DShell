@@ -5,32 +5,15 @@
 #include <arpa/inet.h>
 #include <poll.h>
 #include <errno.h>
+#include "shell.h"
 
 #define MAX_CONN 8
 
-int shell_cmd(int fd, u8 type);
-
-int do_cmd(int client_fd)
-{
-	int r = 0;
-
-	u8 cmd;
-	r = recv(client_fd, &cmd, 1, 0);
-	if(r == 0 || r == -1)
-	{
-		return -1;
-	}
-	else
-	{
-		return shell_cmd(client_fd, cmd);
-	}
-
-	return 0;
-}
-
-void compact(struct pollfd *fds, int *nfds)
+void compact(struct pollfd *fds, struct client_ctx **ctx, int *nfds)
 {
 	int new_fds[MAX_CONN];
+	struct client_ctx *new_ctx[MAX_CONN];
+
 	int n = 0;
 
 	for(int i = 0; i < *nfds; i++)
@@ -38,12 +21,14 @@ void compact(struct pollfd *fds, int *nfds)
 		if(fds[i].fd != -1)
 		{
 			new_fds[n++] = fds[i].fd;
+			new_ctx[n] = ctx[i];
 		}
 	}
 
 	for(int i = 0; i < n; i++)
 	{
 		fds[i].fd = new_fds[i];
+		ctx[i] = new_ctx[i];
 	}
 	*nfds = n;
 }
@@ -69,11 +54,13 @@ void sock_thread(void *arg)
 
   	int serv_fd = socket(AF_INET, SOCK_STREAM, 0);
   	serv_addr.sin_family = AF_INET;
-  	serv_addr.sin_addr.s_addr = gethostid();
+  	serv_addr.sin_addr.s_addr = (in_addr_t)gethostid();
   	serv_addr.sin_port = htons(1337);
 
   	int one = 1;
     r = setsockopt(serv_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int));
+    int bufSize = 1024 * 32;
+    setsockopt(serv_fd, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
 
   	r = bind(serv_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
   	if(r == -1)
@@ -99,6 +86,8 @@ void sock_thread(void *arg)
   	}
 
   	struct pollfd *fds = malloc(sizeof(struct pollfd) * MAX_CONN);
+  	struct client_ctx **ctx = malloc(4 * MAX_CONN);
+
   	memset(fds, 0, sizeof(struct pollfd) * MAX_CONN);
 
   	int i;
@@ -114,6 +103,8 @@ void sock_thread(void *arg)
 
 	while(running)
 	{
+		printf("polling %i fds..\n", nfds);
+
 		r = poll(fds, nfds, -1);
 
 		for(i = 0; i < nfds; i++)
@@ -137,18 +128,22 @@ void sock_thread(void *arg)
 						}
 						else
 						{
+							ctx[nfds] = malloc(sizeof(struct client_ctx));
+							memset(ctx[nfds], 0, sizeof(struct client_ctx));
+
 							fds[nfds].fd = r;
 							fds[nfds].events = POLLIN;
 							fds[nfds].revents = 0;
 							nfds++;
 
 							printf("accepted connection from %s:%u\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+							printf("len: %i\n", ctx[nfds-1]->scratch_len);
 						}
 					}
 				}
 				else
 				{
-					r = do_cmd(fds[i].fd);
+					r = process_cmd(fds[i].fd, ctx[i]);
 					if(r == 1)
 					{
 						printf("stopping...\n");
@@ -157,18 +152,24 @@ void sock_thread(void *arg)
 					else if(r == -1)
 					{
 						printf("closing %i slot %i\n", fds[i].fd, i);
+						free(ctx[i]);
+						ctx[i] = NULL;
+
 						close(fds[i].fd);
 						fds[i].fd = -1;
-						compact(fds, &nfds);
+						compact(fds, ctx, &nfds);
 					}
 				}
 			}
 			else if(fds[i].revents & POLLERR || fds[i].revents & POLLHUP)
 			{
 				printf("closing %i slot %i\n", fds[i].fd, i);
+				
+				free(ctx[i]);
+				ctx[i] = NULL;
 				close(fds[i].fd);
 				fds[i].fd = -1;
-				compact(fds, &nfds);
+				compact(fds, ctx, &nfds);
 
 				if(i == 0) break;
 			}
