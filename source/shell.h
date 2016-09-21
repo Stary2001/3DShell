@@ -1,13 +1,7 @@
-#define SCRATCH_LENGTH 256
+#pragma once
+#include "client.h"
 
-typedef struct client_ctx
-{
-	char scratch[SCRATCH_LENGTH];
-	int scratch_off;
-	int scratch_len;
-} client_ctx;
-
-enum TokenType
+enum token_type
 {
 	Null,
 	Int,
@@ -15,20 +9,20 @@ enum TokenType
 	Cmd
 };
 
-enum CmdType
+enum cmd_type
 {
 	Gdb
 };
 
 typedef struct token
 {
-	enum TokenType t;
+	enum token_type t;
 	union
 	{
 		int i;
 		unsigned int ui;
 		char *str;
-		enum CmdType cmd;
+		enum cmd_type cmd;
 	}
 } token;
 

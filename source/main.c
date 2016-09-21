@@ -1,39 +1,79 @@
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#include <arpa/inet.h>
-#include <poll.h>
-#include <errno.h>
-#include "shell.h"
-
-#define MAX_CONN 8
-
-void compact(struct pollfd *fds, struct client_ctx **ctx, int *nfds)
-{
-	int new_fds[MAX_CONN];
-	struct client_ctx *new_ctx[MAX_CONN];
-
-	int n = 0;
-
-	for(int i = 0; i < *nfds; i++)
-	{
-		if(fds[i].fd != -1)
-		{
-			new_fds[n++] = fds[i].fd;
-			new_ctx[n] = ctx[i];
-		}
-	}
-
-	for(int i = 0; i < n; i++)
-	{
-		fds[i].fd = new_fds[i];
-		ctx[i] = new_ctx[i];
-	}
-	*nfds = n;
-}
+#include "sock_util.h"
+#include "client.h"
 
 int running = 1;
+
+int accept_cback(int fd, struct client_ctx *ctx)
+{
+	u8 type;
+	int i = recv(fd, &type, 1, MSG_PEEK);
+	printf("char: %c\n", type);
+	//svcSleepThread(4000000000ULL);
+
+	if(type == '+')
+	{
+		ctx->type = TYPE_GDB;
+	}
+	else
+	{
+		ctx->type = TYPE_SHELL;
+	}
+}
+
+int data_cback(int fd, struct client_ctx *ctx)
+{
+	if(ctx->type == TYPE_SHELL)
+	{
+		int r = process_cmd(fd, ctx);
+		if(r == 1)
+		{
+			printf("stopping...\n");
+			running = 0;
+		}
+		else if(r == -1)
+		{
+			return -1;
+		}
+	}
+	else if(ctx->type == TYPE_GDB)
+	{
+		u8 packet_type = 0;
+		int r = recv(fd, &packet_type, 1, 0);
+		if(r == -1 || r == 0)
+		{
+			return -1;
+		}
+
+		switch(packet_type)
+		{
+			case '$':
+				{	
+					r = gdb_do_packet(fd, ctx);
+					if(r == -1 || r == 0)
+					{
+						return -1;
+					}
+				}
+			break;
+
+			case '+': // successful
+			break;
+
+			case '-':
+				printf("gdb doesn't like this\n");
+				return -1;
+			break;
+
+			default:
+				printf("unhandled gdb '%02x' (%c)\n", packet_type, packet_type);
+			break;
+		}
+	}
+}
+
 void sock_thread(void *arg)
 {
 	printf("hello\n");
@@ -48,150 +88,29 @@ void sock_thread(void *arg)
   	}
 
 	socInit(soc_buff, soc_sz);
-
-	struct sockaddr_in serv_addr;
   	int r = 0;
 
-  	int serv_fd = socket(AF_INET, SOCK_STREAM, 0);
-  	serv_addr.sin_family = AF_INET;
-  	serv_addr.sin_addr.s_addr = (in_addr_t)gethostid();
-  	serv_addr.sin_port = htons(1337);
-
-  	int one = 1;
-    r = setsockopt(serv_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int));
-    int bufSize = 1024 * 32;
-    setsockopt(serv_fd, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
-
-  	r = bind(serv_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
-  	if(r == -1)
+  	struct server_ctx *serv = server_bind(gethostid(), 1337);
+  	printf("got server %08x\n", serv);
+  	if(serv == NULL)
   	{
-  		close(serv_fd);
-  		acExit();
-  		socExit();
-
-  		printf("bind failed!\n");
-  		free(soc_buff);
-  		svcExitThread();
+  		goto done;
   	}
-
-  	r = listen(serv_fd, 5);
-  	if(r == -1)
-  	{
-  		close(serv_fd);
-  		acExit();
-  		socExit();
-  		free(soc_buff);
-  		printf("listen failed!\n");
-  		svcExitThread();
-  	}
-
-  	struct pollfd *fds = malloc(sizeof(struct pollfd) * MAX_CONN);
-  	struct client_ctx **ctx = malloc(4 * MAX_CONN);
-
-  	memset(fds, 0, sizeof(struct pollfd) * MAX_CONN);
-
-  	int i;
-  	for(i = 0; i < MAX_CONN; i++)
-  	{
-  		fds[i].fd = -1;
-  	}
-
-  	int nfds = 1;
-
-  	fds[0].fd = serv_fd;
-  	fds[0].events = POLLIN;
 
 	while(running)
 	{
-		printf("polling %i fds..\n", nfds);
-
-		r = poll(fds, nfds, -1);
-
-		for(i = 0; i < nfds; i++)
-		{
-			if(fds[i].fd < 0) continue;
-
-			if(fds[i].revents & POLLIN)
-			{
-				if(fds[i].fd == serv_fd)
-				{
-					struct sockaddr_in addr;
-					socklen_t addrlen = sizeof(addr);
-					r = accept(serv_fd, (struct sockaddr*)&addr, &addrlen);
-					if(r != -1)
-					{
-						const char *sorry = "max conns reached\n";
-						if(nfds == MAX_CONN)
-						{
-							send(r, sorry, strlen(sorry), 0);
-							close(r);
-						}
-						else
-						{
-							ctx[nfds] = malloc(sizeof(struct client_ctx));
-							memset(ctx[nfds], 0, sizeof(struct client_ctx));
-
-							fds[nfds].fd = r;
-							fds[nfds].events = POLLIN;
-							fds[nfds].revents = 0;
-							nfds++;
-
-							printf("accepted connection from %s:%u\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
-							printf("len: %i\n", ctx[nfds-1]->scratch_len);
-						}
-					}
-				}
-				else
-				{
-					r = process_cmd(fds[i].fd, ctx[i]);
-					if(r == 1)
-					{
-						printf("stopping...\n");
-						running = 0;
-					}
-					else if(r == -1)
-					{
-						printf("closing %i slot %i\n", fds[i].fd, i);
-						free(ctx[i]);
-						ctx[i] = NULL;
-
-						close(fds[i].fd);
-						fds[i].fd = -1;
-						compact(fds, ctx, &nfds);
-					}
-				}
-			}
-			else if(fds[i].revents & POLLERR || fds[i].revents & POLLHUP)
-			{
-				printf("closing %i slot %i\n", fds[i].fd, i);
-				
-				free(ctx[i]);
-				ctx[i] = NULL;
-				close(fds[i].fd);
-				fds[i].fd = -1;
-				compact(fds, ctx, &nfds);
-
-				if(i == 0) break;
-			}
-		}
+		r = server_poll(serv, 100, accept_cback, data_cback);
+		if(r == -1) break;
 	}
 
-	printf("done\n");
-	for(int i = 0; i < nfds; i++)
-	{
-		if(fds[i].fd != -1)
-		{
-			close(fds[i].fd);
-		}
-	}
+	server_destroy(serv);
 
-	free(fds);
-
+	done:
 	socExit();
 	free(soc_buff);
 
 	acExit();
-	svcExitThread();
+	threadExit(0);
 }
 
 int main(int argc, char **argv)
@@ -200,7 +119,7 @@ int main(int argc, char **argv)
 	consoleInit(GFX_TOP, NULL);
 	printf("hello\n");
 
-	Thread sock = threadCreate(sock_thread, NULL, 0x4000, 0x30, 0, true);
+	Thread sock = threadCreate(sock_thread, NULL, 0x4000, 0x30, 0, false);
 
 	while(aptMainLoop())
 	{
@@ -211,6 +130,8 @@ int main(int argc, char **argv)
 	}
 
 	running = false;
+	threadJoin(sock, U64_MAX);
+	threadFree(sock);
 
 	gfxExit();
 
