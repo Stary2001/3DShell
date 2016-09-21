@@ -17,7 +17,6 @@ void send_packet(int fd, char *p, size_t len)
 {
 	char chk_str[3];
 	chk_str[2] = 0;
-	// static supported list for now....
 	
 	u8 chk = cksum(p, len);
 	sprintf(chk_str, "%02x", chk);
@@ -48,7 +47,7 @@ int parse_pkt(int fd, char *pkt_buf, size_t pkt_len)
 	{
 		case 'g':
 		{
-			char regs[38 * 8 + 1];
+			char regs[38 * 8 + 1]; // todo: find actual register number..
 			memset(regs, '0', 38*8);
 			regs[8*38] = 0;
 
