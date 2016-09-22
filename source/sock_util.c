@@ -74,8 +74,9 @@ struct server_ctx *server_bind(u32 host, u16 port)
   		s->fds[i].fd = -1;
   	}
 
-  	s->fds[0].fd = s->serv_fd;
-  	s->fds[0].events = POLLIN;
+	s->client_ctxs[0] = NULL;
+	s->fds[0].fd = s->serv_fd;
+	s->fds[0].events = POLLIN;
 
   	return s;
 }
@@ -170,8 +171,12 @@ void compact(struct pollfd *fds, struct client_ctx **ctx, int *nfds)
 int server_close(struct server_ctx *serv, int i)
 {
 	printf("closing %i slot %i\n", serv->fds[i].fd, i);
-	free(serv->client_ctxs[i]);
-	serv->client_ctxs[i] = NULL;
+	if(serv->client_ctxs[i] != NULL)
+	{
+		free(serv->client_ctxs[i]);
+		serv->client_ctxs[i] = NULL;
+	}
+
 	close(serv->fds[i].fd);
 	serv->fds[i].fd = -1;
 	compact(serv->fds, serv->client_ctxs, &serv->nfds);

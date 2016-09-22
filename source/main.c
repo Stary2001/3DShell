@@ -90,7 +90,7 @@ void sock_thread(void *arg)
 	socInit(soc_buff, soc_sz);
   	int r = 0;
 
-  	struct server_ctx *serv = server_bind(gethostid(), 1337);
+  	struct server_ctx *serv = server_bind(gethostid(), 1111);
   	printf("got server %08x\n", serv);
   	if(serv == NULL)
   	{
