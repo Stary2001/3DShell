@@ -155,8 +155,9 @@ void compact(struct pollfd *fds, struct client_ctx **ctx, int *nfds)
 	{
 		if(fds[i].fd != -1)
 		{
-			new_fds[n++] = fds[i].fd;
+			new_fds[n] = fds[i].fd;
 			new_ctx[n] = ctx[i];
+			n++;
 		}
 	}
 
