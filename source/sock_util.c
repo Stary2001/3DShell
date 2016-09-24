@@ -172,6 +172,7 @@ void compact(struct pollfd *fds, struct client_ctx **ctx, int *nfds)
 int server_close(struct server_ctx *serv, int i)
 {
 	printf("closing %i slot %i\n", serv->fds[i].fd, i);
+
 	if(serv->client_ctxs[i] != NULL)
 	{
 		free(serv->client_ctxs[i]);
