@@ -9,4 +9,5 @@ enum client_type
 typedef struct client_ctx
 {
 	enum client_type type;
+	void *data;
 } client_ctx;

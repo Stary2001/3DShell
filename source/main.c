@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "sock_util.h"
 #include "client.h"
+#include "gdb.h"
 
 int running = 1;
 
@@ -16,10 +17,12 @@ int accept_cback(int fd, struct client_ctx *ctx)
 	if(type == '+')
 	{
 		ctx->type = TYPE_GDB;
+		ctx->data = malloc(sizeof(struct gdb_ctx));
 	}
 	else
 	{
 		ctx->type = TYPE_SHELL;
+		ctx->data = NULL; // todo: shell ctx
 	}
 }
 

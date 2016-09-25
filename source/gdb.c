@@ -1,5 +1,7 @@
 #include <3ds.h>
+#include <arpa/inet.h> // just for htons..
 #include "shell.h"
+#include "gdb.h"
 
 #define is(s) 
 
@@ -51,7 +53,129 @@ extern const int arm_core_xml_len;
 extern const char *arm_vfp_xml;
 extern const int arm_vfp_xml_len;
 
-int parse_pkt(int fd, char *pkt_buf, size_t pkt_len)
+int do_features_xfer(struct gdb_ctx *ctx, int fd, const char *annex, const char *rest)
+{
+	char *off_s = rest;
+	char *off_end = strchr(off_s, ',');
+	if(off_end == NULL) return -1;
+	*off_end = 0;
+	char *len_s = off_end + 1;
+
+	unsigned long off = strtoul(off_s, NULL, 16);
+	unsigned long len = strtoul(len_s, NULL, 16);
+
+	printf("qXfer features read file %s, %u/%u\n", annex, off, len);
+
+	char *v = NULL;
+	int target_len = 0;
+
+	if(cmp(annex, "target.xml") == 0)
+	{
+		v = &target_xml;
+		target_len = target_xml_len;
+	}
+	else if(cmp(annex, "arm-core.xml") == 0)
+	{
+		v = &arm_core_xml;
+		target_len = arm_core_xml_len;
+	}
+	else if(cmp(annex, "arm-vfpv2.xml") == 0)
+	{
+		v = &arm_vfp_xml;
+		target_len = arm_vfp_xml_len;
+	}
+
+	if(v == NULL)
+	{
+		return -1;
+	}
+
+	v += off;
+	target_len -= off;
+
+	u8 chk;
+
+	if(off + len > target_len) // would we overrun with the *entire* buffer?
+	{
+		send(fd, "$l", 2, 0); // end of data, dont truncate length
+		chk = 'l';
+	}
+	else
+	{
+		send(fd, "$m", 2, 0); // still more data, only send buffer size
+		chk = 'm';
+		target_len = len;
+	}
+
+	chk += cksum(v, target_len);
+	send(fd, v, target_len, 0);
+
+	char chk_str[3];
+	chk_str[2] = 0;
+	sprintf(chk_str, "%02x", chk);
+	send(fd, "#", 1, 0);
+	send(fd, chk_str, 2, 0);
+
+	return 0;
+}
+
+int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
+{
+	if(pkt_buf[1] == 'C') // qC = 'get current thread id'
+	{
+		char buf[16];
+		snprintf(buf, 16, "QC %02X", htons(ctx->tid));
+		send_packet(fd, buf, strlen(buf));
+	}
+	else if(cmp(pkt_buf+1, "Attached") == 0)
+	{
+		send_packet(fd, "1", 1);
+	}
+	else if(cmp(pkt_buf+1, "Supported") == 0)
+	{
+		printf("qSupported\n");
+		send_supported(fd);
+	}
+	else if(cmp(pkt_buf+1, "Xfer") == 0)
+	{
+		char *object = pkt_buf + 6;
+		char *object_end = strchr(object, ':');
+		if(object_end == NULL) return -1;
+		*object_end = 0;
+
+		char *op = object_end + 1;
+		char *op_end = strchr(op, ':');
+		if(op_end == NULL) return -1;
+		*op_end = 0;
+
+		char *annex = op_end + 1;
+		char *annex_end = strchr(annex, ':');
+		if(annex_end == NULL) return -1;
+		*annex_end = 0;
+
+		if(cmp(op, "read") == 0)
+		{
+			if(cmp(object, "features") == 0)
+			{
+				return do_features_xfer(ctx, fd, annex, annex_end + 1);
+			}
+		}
+
+		return -1;
+	}
+	else if(cmp(pkt_buf+1, "fThreadInfo") == 0)
+	{
+		return -1; // stubbed
+	}
+	else
+	{
+		return -1; // catch-all
+	}
+
+	return 0;
+}
+
+int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 {
 	pkt_buf[pkt_len - 1] = 0; // kill the #
 
@@ -71,102 +195,7 @@ int parse_pkt(int fd, char *pkt_buf, size_t pkt_len)
 
 		case 'q':
 		{
-			if(cmp(pkt_buf+1, "Supported") == 0)
-			{
-				printf("qSupported\n");
-				send_supported(fd);
-			}
-			else if(cmp(pkt_buf+1, "Xfer") == 0)
-			{
-				pkt_buf[5] = 0; // "qXfer:"
-
-				char *object = pkt_buf + 6;
-				char *object_end = strchr(object, ':');
-				if(object_end == NULL) return -1;
-				*object_end = 0;
-
-				if(cmp(object, "features") == 0)
-				{
-					char *op = object_end + 1;
-					char *op_end = strchr(op, ':');
-					if(op_end == NULL) return -1;
-					*op_end = 0;
-
-					char *annex = op_end + 1;
-					char *annex_end = strchr(annex, ':');
-					if(annex_end == NULL) return -1;
-					*annex_end = 0;
-
-					char *off_s = annex_end + 1;
-					char *off_end = strchr(off_s, ',');
-					if(off_end == NULL) return -1;
-					*off_end = 0;
-					char *len_s = off_end + 1;
-
-					unsigned long off = strtoul(off_s, NULL, 16);
-					unsigned long len = strtoul(len_s, NULL, 16);
-
-					printf("qXfer %s %s file %s, %u/%u\n", object, op, annex, off, len);
-
-					char *v = NULL;
-					int target_len = 0;
-
-					if(cmp(annex, "target.xml") == 0)
-					{
-						v = &target_xml;
-						target_len = target_xml_len;
-					}
-					else if(cmp(annex, "arm-core.xml") == 0)
-					{
-						v = &arm_core_xml;
-						target_len = arm_core_xml_len;
-					}
-					else if(cmp(annex, "arm-vfpv2.xml") == 0)
-					{
-						v = &arm_vfp_xml;
-						target_len = arm_vfp_xml_len;
-					}
-
-					if(v == NULL)
-					{
-						return -1;	
-					}
-					
-					v += off;
-					target_len -= off;
-
-					u8 chk;
-					
-					if(off + len > target_len) // would we overrun with the *entire* buffer?
-					{
-						send(fd, "$l", 2, 0); // end of data, dont truncate length
-						chk = 'l';
-					}
-					else
-					{
-						send(fd, "$m", 2, 0); // still more data, only send buffer size
-						chk = 'm';
-						target_len = len;
-					}
-
-					chk += cksum(v, target_len);
-					send(fd, v, target_len, 0);
-
-					char chk_str[3];
-					chk_str[2] = 0;
-					sprintf(chk_str, "%02x", chk);
-					send(fd, "#", 1, 0);
-					send(fd, chk_str, 2, 0);
-
-					return 0;
-				}
-
-				return -1;
-			}
-			else
-			{
-				return -1;
-			}
+			return do_query(ctx, fd, pkt_buf, pkt_len);
 		}
 		break;
 
@@ -209,8 +238,24 @@ int parse_pkt(int fd, char *pkt_buf, size_t pkt_len)
 		}
 		break;
 
+		case 'H':
+			if(pkt_buf[1] == 'g')
+			{
+				unsigned long tid = strtoul(pkt_buf + 2, NULL, 16);
+				if(tid == 0)
+				{
+					tid = 1; // first thread. shh.
+				}
+				ctx->tid = tid;
+				send_ok(fd);
+			}
+			else if(pkt_buf[1] == 'c')
+			{
+				return -1; // intentionally refuse this packet, it's bad
+			}
+		break;
+
 		default:
-			//printf("unk: '%s'\n", pkt_buf);
 			return -1;
 		break;
 	}
@@ -232,8 +277,10 @@ int gdb_do_packet(int fd, struct client_ctx *ctx)
 
 	// todo: actual checksum..
 	send(fd, "+", 1, 0);
-	if(parse_pkt(fd, pkt_buf, pkt_len) == -1)
+
+	if(parse_pkt((struct gdb_ctx*)ctx->data, fd, pkt_buf, pkt_len) == -1)
 	{
+		printf("refused pkt: '%s'\n", pkt_buf);
 		send(fd, "$#00", 4, 0);
 	}
 
