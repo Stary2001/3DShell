@@ -3,7 +3,33 @@
 #include "shell.h"
 #include "gdb.h"
 
-#define is(s) 
+int encode(char *dst, char *src, int len) // length of source buffer
+{
+	const char *chars = "0123456789abcdef";
+
+	int i = 0;
+	while(len--)
+	{
+		*dst++ = chars[(src[i] & 0xf0) >> 4];
+		*dst++ = chars[src[i++] & 0xf];
+	}
+	return i;
+}
+
+int decode(char *dst, char *src, int len) // length of dst buffer
+{
+	char a[3];
+	a[2] = 0;
+
+	int i = 0;
+	while(len--)
+	{
+		memcpy(a, src, 2);
+		src += 2;
+		dst[i++] = (char)strtoul(a, NULL, 16);
+	}
+	return i;
+}
 
 u8 cksum(char *buf, size_t len)
 {
@@ -29,6 +55,22 @@ void send_packet(int fd, char *p, size_t len)
 	send(fd, chk_str, 2, 0);
 }
 
+void send_packet_prefix(int fd, char *p, size_t len, const char *prefix)
+{
+	char chk_str[3];
+	chk_str[2] = 0;
+	
+	u8 chk = cksum(p, len);
+	chk += cksum(prefix, strlen(prefix));
+	sprintf(chk_str, "%02x", chk);
+
+	send(fd, "$", 1, 0);
+	send(fd, prefix, strlen(prefix), 0);
+	send(fd, p, len, 0);
+	send(fd, "#", 1, 0);
+	send(fd, chk_str, 2, 0);
+}
+
 void send_supported(int fd)
 {
 	char *supp = "PacketSize=512;qXfer:features:read+";
@@ -44,6 +86,16 @@ void send_ok(int fd)
 int cmp(char *buf, const char *buff)
 {
 	return strncmp(buf, buff, strlen(buff));
+}
+
+int gdb_shell_out(int fd, void *ctx, const char *s)
+{
+	char encode_buff[512];
+	int len = strlen(s);
+	if(len > 256) { len = 256; }
+	encode(encode_buff, s, len);
+
+	send_packet_prefix(fd, encode_buff, strlen(encode_buff), "O");
 }
 
 extern const char *target_xml;
@@ -90,31 +142,26 @@ int do_features_xfer(struct gdb_ctx *ctx, int fd, const char *annex, const char 
 		return -1;
 	}
 
+	if(target_len <= off)
+	{
+		send_packet(fd, "l", 1);	
+		return 0;
+	}
+
 	v += off;
 	target_len -= off;
+	printf("sending %i bytes\n", target_len);
 
 	u8 chk;
 
-	if(off + len > target_len) // would we overrun with the *entire* buffer?
+	if(off + len > target_len) // would we overrun our buffer sending len bytes?
 	{
-		send(fd, "$l", 2, 0); // end of data, dont truncate length
-		chk = 'l';
+		send_packet_prefix(fd, v, target_len, "l"); // send what's left of the file.
 	}
 	else
 	{
-		send(fd, "$m", 2, 0); // still more data, only send buffer size
-		chk = 'm';
-		target_len = len;
+		send_packet_prefix(fd, v, len, "m"); // send a gdb-buffer sized chunk.
 	}
-
-	chk += cksum(v, target_len);
-	send(fd, v, target_len, 0);
-
-	char chk_str[3];
-	chk_str[2] = 0;
-	sprintf(chk_str, "%02x", chk);
-	send(fd, "#", 1, 0);
-	send(fd, chk_str, 2, 0);
 
 	return 0;
 }
@@ -133,7 +180,6 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	}
 	else if(cmp(pkt_buf+1, "Supported") == 0)
 	{
-		printf("qSupported\n");
 		send_supported(fd);
 	}
 	else if(cmp(pkt_buf+1, "Xfer") == 0)
@@ -167,6 +213,22 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	{
 		return -1; // stubbed
 	}
+	else if(cmp(pkt_buf+1, "Rcmd") == 0)
+	{
+		printf("got Rcmd\n");
+
+		char line[256];
+		memset(line, 0, 256);
+
+		pkt_len -= strlen("qRcmd,");
+		pkt_buf += strlen("qRcmd,");
+		printf("hex %s %i long\n", pkt_buf, pkt_len);
+
+		decode(line, pkt_buf, pkt_len/2);
+		int r = process_line(fd, &ctx->shell, line);
+		send_packet(fd, "OK", 2);
+		return r;
+	}
 	else
 	{
 		return -1; // catch-all
@@ -178,6 +240,7 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 {
 	pkt_buf[pkt_len - 1] = 0; // kill the #
+	pkt_len--;
 
 	// Yeah. I do bad things here. Sshhh.
 

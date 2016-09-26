@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "sock_util.h"
 #include "client.h"
+#include "shell.h"
 #include "gdb.h"
 
 int running = 1;
@@ -18,11 +19,15 @@ int accept_cback(int fd, struct client_ctx *ctx)
 	{
 		ctx->type = TYPE_GDB;
 		ctx->data = malloc(sizeof(struct gdb_ctx));
+		gdb_ctx *c = (gdb_ctx*)ctx->data;
+		c->shell.out = gdb_shell_out;
 	}
 	else
 	{
 		ctx->type = TYPE_SHELL;
-		ctx->data = NULL; // todo: shell ctx
+		ctx->data = malloc(sizeof(struct shell_ctx));
+		shell_ctx *c = (shell_ctx*)ctx->data;
+		c->out = sock_shell_out;
 	}
 }
 

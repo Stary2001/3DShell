@@ -1,4 +1,5 @@
 #include <3ds.h>
+#include <stdarg.h>
 #include <scenic/proc.h>
 #include <scenic/kernel/kproc.h>
 #include <scenic/kernel/kmem.h>
@@ -7,6 +8,22 @@
 
 #define checked_recv(fd, v, l) if((r=read(fd, v, l, 0)) == -1) { return -1; }
 #define VER 0
+
+int shell_printf(int fd, struct shell_ctx *ctx, const char *line, ...)
+{
+	char printf_buffer[1024];
+	va_list a;
+	va_start(a, line);
+	vsnprintf(printf_buffer, 1024, line, a);
+	ctx->out(fd, ctx, printf_buffer);
+	va_end(a);
+}
+
+int process_line(int fd, struct shell_ctx *ctx, const char *line)
+{
+	shell_printf(fd, ctx, "got line '%s'\n", line);
+	return 0;
+}
 
 int process_cmd(int fd, struct client_ctx *ctx)
 {
@@ -17,7 +34,11 @@ int process_cmd(int fd, struct client_ctx *ctx)
 		return -1;
 	}
 
-	printf("found line %i long\n", r);
+	line[r-1] = 0; // remove \n
+	return process_line(fd, (struct shell_ctx*)ctx->data, line);
+}
 
-	return 0;
+int sock_shell_out(int fd, void *ctx, const char *s)
+{
+	return send(fd, s, strlen(s), 0);
 }
