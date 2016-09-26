@@ -222,8 +222,6 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 		pkt_len -= strlen("qRcmd,");
 		pkt_buf += strlen("qRcmd,");
-		printf("hex %s %i long\n", pkt_buf, pkt_len);
-
 		decode(line, pkt_buf, pkt_len/2);
 		int r = process_line(fd, &ctx->shell, line);
 		send_packet(fd, "OK", 2);
