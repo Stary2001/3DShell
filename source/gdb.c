@@ -73,7 +73,7 @@ void send_packet_prefix(int fd, char *p, size_t len, const char *prefix)
 
 void send_supported(int fd)
 {
-	char *supp = "PacketSize=512;qXfer:features:read+";
+	char *supp = "PacketSize=400;qXfer:features:read+;multiprocess+;QStartNoAckMode+";
 	send_packet(fd, supp, strlen(supp));
 }
 
@@ -107,6 +107,12 @@ extern const int arm_vfp_xml_len;
 
 int do_features_xfer(struct gdb_ctx *ctx, int fd, const char *annex, const char *rest)
 {
+	if(ctx->pid == -1)
+	{
+		send_packet(fd, "E01", strlen("E01"));
+		return 0;
+	}
+
 	char *off_s = rest;
 	char *off_end = strchr(off_s, ',');
 	if(off_end == NULL) return -1;
@@ -115,8 +121,6 @@ int do_features_xfer(struct gdb_ctx *ctx, int fd, const char *annex, const char 
 
 	unsigned long off = strtoul(off_s, NULL, 16);
 	unsigned long len = strtoul(len_s, NULL, 16);
-
-	printf("qXfer features read file %s, %u/%u\n", annex, off, len);
 
 	char *v = NULL;
 	int target_len = 0;
@@ -150,7 +154,6 @@ int do_features_xfer(struct gdb_ctx *ctx, int fd, const char *annex, const char 
 
 	v += off;
 	target_len -= off;
-	printf("sending %i bytes\n", target_len);
 
 	u8 chk;
 
@@ -171,7 +174,12 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	if(pkt_buf[1] == 'C') // qC = 'get current thread id'
 	{
 		char buf[16];
-		snprintf(buf, 16, "QC %02X", htons(ctx->tid));
+		s32 pid = ctx->pid;
+		s32 tid = ctx->tid;
+		if(pid == -1) { pid = 0; }
+		if(tid == -1) { tid = 0; }
+
+		snprintf(buf, 16, "QCp%x.%x", pid, tid);
 		send_packet(fd, buf, strlen(buf));
 	}
 	else if(cmp(pkt_buf+1, "Attached") == 0)
@@ -211,6 +219,8 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	}
 	else if(cmp(pkt_buf+1, "fThreadInfo") == 0)
 	{
+		printf("getting threads...\n");
+
 		return -1; // stubbed
 	}
 	else if(cmp(pkt_buf+1, "Rcmd") == 0)
@@ -233,6 +243,79 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	}
 
 	return 0;
+}
+
+int do_query_write(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
+{
+	if(cmp(pkt_buf+1, "StartNoAckMode") == 0)
+	{
+		ctx->ack = 0;
+		send_ok(fd);
+	}
+	else
+	{
+		return -1;
+	}
+
+	return 0;
+}
+
+int do_v_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
+{
+	if(cmp(pkt_buf+1, "MustReplyEmpty") == 0)
+	{
+		send(fd, "$#00", 4, 0);
+	}
+	else if(cmp(pkt_buf+1, "Attach") == 0)
+	{
+		char *pid_s = strchr(pkt_buf, ';');
+		if(pid_s != NULL)
+		{
+			pid_s++;
+
+			unsigned long pid = strtoul(pid_s, NULL, 16);
+			ctx->proc = proc_open(pid, FLAG_DEBUG);
+			ctx->pid = pid;
+
+			ctx->stop_reason = STOP_ATTACH;
+			ctx->stop_status = 0;
+			send_stop(fd, ctx);
+
+			return 0; // stub
+		}
+		else
+		{
+			return -1;
+		}
+	}
+	else
+	{
+		return -1;
+	}
+
+	return 0;
+}
+
+int send_stop(int fd, struct gdb_ctx *ctx)
+{
+	const char *prefix;
+
+	switch(ctx->stop_reason)
+	{
+		case STOP_ATTACH:
+		case STOP_BREAK:
+			prefix = "S";
+		break;
+
+		default:
+			prefix = "W";
+		break;
+	}
+
+	char buf[3];
+	sprintf(buf, "%02x", ctx->stop_status);
+
+	send_packet_prefix(fd, buf, 2, prefix);
 }
 
 int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
@@ -260,6 +343,10 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		}
 		break;
 
+		case 'Q':
+			return do_query_write(ctx, fd, pkt_buf, pkt_len);
+		break;
+
 		case 'm':
 		{
 			printf("m: %s\n", pkt_buf);
@@ -285,35 +372,42 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 		case 'v':
 		{
-			if(cmp(pkt_buf+1, "MustReplyEmpty") == 0)
-			{
-				send(fd, "$#00", 4, 0);
-			}
+			do_v_pkt(ctx, fd, pkt_buf, pkt_len);
 		}
 		break;
 
 		case '?': // why'd it stop
 		{
-			char *s = "S01";
-			send_packet(fd, s, strlen(s));
+			send_stop(fd, ctx);
 		}
 		break;
 
 		case 'H':
 			if(pkt_buf[1] == 'g')
 			{
-				unsigned long tid = strtoul(pkt_buf + 2, NULL, 16);
-				if(tid == 0)
+				if(ctx->pid == -1)
 				{
-					tid = 1; // first thread. shh.
+					send_packet(fd, "E01", strlen("E01"));
 				}
-				ctx->tid = tid;
-				send_ok(fd);
+				else
+				{
+					unsigned long tid = strtoul(pkt_buf + 2, NULL, 16);
+					if(tid == 0)
+					{
+						tid = 1; // first thread. shh.
+					}
+					ctx->tid = tid;
+					send_ok(fd);
+				}
 			}
 			else if(pkt_buf[1] == 'c')
 			{
 				return -1; // intentionally refuse this packet, it's bad
 			}
+		break;
+
+		case '!':
+			send_ok(fd);
 		break;
 
 		default:
@@ -326,20 +420,21 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 int gdb_do_packet(int fd, struct client_ctx *ctx)
 {
-	char pkt_buf[512];
+	char pkt_buf[1024];
 	char checksum[2];
-	memset(pkt_buf, 0, 512);
+	memset(pkt_buf, 0, 1024);
 
-	int r = read_until(fd, pkt_buf, 512, "#", 1);
+	int r = read_until(fd, pkt_buf, 1024, "#", 1);
 	int pkt_len = r;
 	if(r == -1 || r == 0) { return r; }
 
 	r = recv(fd, checksum, 2, 0);
 
 	// todo: actual checksum..
-	send(fd, "+", 1, 0);
+	gdb_ctx *c = (gdb_ctx*)ctx->data;
+	if(c->ack) send(fd, "+", 1, 0);
 
-	if(parse_pkt((struct gdb_ctx*)ctx->data, fd, pkt_buf, pkt_len) == -1)
+	if(parse_pkt(c, fd, pkt_buf, pkt_len) == -1)
 	{
 		printf("refused pkt: '%s'\n", pkt_buf);
 		send(fd, "$#00", 4, 0);

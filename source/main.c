@@ -21,6 +21,9 @@ int accept_cback(int fd, struct client_ctx *ctx)
 		ctx->data = malloc(sizeof(struct gdb_ctx));
 		gdb_ctx *c = (gdb_ctx*)ctx->data;
 		c->shell.out = gdb_shell_out;
+		c->ack = 1;
+		c->pid = -1;
+		c->tid = -1;
 	}
 	else
 	{
@@ -126,6 +129,8 @@ int main(int argc, char **argv)
 	gfxInitDefault();
 	consoleInit(GFX_TOP, NULL);
 	printf("hello\n");
+
+	debug_enable();
 
 	Thread sock = threadCreate(sock_thread, NULL, 0x4000, 0x30, 0, false);
 

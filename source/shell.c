@@ -6,9 +6,6 @@
 #include "shell.h"
 #include "sock_util.h"
 
-#define checked_recv(fd, v, l) if((r=read(fd, v, l, 0)) == -1) { return -1; }
-#define VER 0
-
 int shell_printf(int fd, struct shell_ctx *ctx, const char *line, ...)
 {
 	char printf_buffer[1024];
