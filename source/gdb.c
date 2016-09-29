@@ -217,11 +217,58 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 		return -1;
 	}
-	else if(cmp(pkt_buf+1, "fThreadInfo") == 0)
+	else if(cmp(pkt_buf+2, "ThreadInfo") == 0)
 	{
-		printf("getting threads...\n");
+		if(ctx->proc == NULL) // Not attached, error.
+		{
+			send_packet_prefix(fd, "01", 2, "E");
+			return 0;
+		}
 
-		return -1; // stubbed
+		if(pkt_buf[1] == 'f') // q*f*threadinfo
+		{
+			ctx->_curr_thread_idx = 0;
+		}
+		else
+		{
+			if(ctx->_curr_thread_idx == ctx->proc->num_threads)
+			{
+				send_packet(fd, "l", 1);
+				return 0;
+			}
+		}
+
+		char buff[256];
+		buff[0] = 'm';
+		int off = 1;
+
+		if(proc_get_all_threads(ctx->proc) < 0)  // todo: multiprocess stub
+		{
+			printf("proc_get_all_threads failed!\n");
+			send_packet_prefix(fd, "01", 2, "E");
+			return 0;
+		}
+
+		printf("getting threads... %i -> %i\n", ctx->_curr_thread_idx, ctx->proc->num_threads);
+
+		int i;
+		for(i = ctx->_curr_thread_idx; i < ctx->proc->num_threads; i++)
+		{
+			printf("tid %08x\n", ctx->proc->threads[i].tid);
+			int len = snprintf(buff + off, 256 - off, "%x,", ctx->proc->threads[i].tid);
+			if(off + len > 256)
+			{
+				ctx->_curr_thread_idx = i;
+				break;
+			}
+			off += len;
+		}
+		off--; // Remove the final comma!
+
+		ctx->_curr_thread_idx = i;
+		send_packet(fd, buff, off);
+
+		return 0; // stubbed
 	}
 	else if(cmp(pkt_buf+1, "Rcmd") == 0)
 	{
@@ -274,14 +321,14 @@ int do_v_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			pid_s++;
 
 			unsigned long pid = strtoul(pid_s, NULL, 16);
-			ctx->proc = proc_open(pid, FLAG_DEBUG);
+			ctx->proc = proc_open(pid, FLAG_DEBUG); // todo: multiprocess stub
 			ctx->pid = pid;
 
 			ctx->stop_reason = STOP_ATTACH;
 			ctx->stop_status = 0;
 			send_stop(fd, ctx);
 
-			return 0; // stub
+			return 0;
 		}
 		else
 		{
@@ -327,6 +374,28 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 	switch(pkt_buf[0])
 	{
+		case 'D':
+		{
+			char *pid_s = strchr(pkt_buf, ';');
+			unsigned long pid = strtoul(pid_s, NULL, 16);
+
+			if(pid == NULL)
+			{
+				proc_close(ctx->proc);
+				ctx->proc = NULL;
+			}
+			else
+			{
+				// Multiprocess, stubbed.
+				proc_close(ctx->proc);
+				ctx->proc = NULL;
+			}
+
+			send_ok(fd);
+		}
+
+		break;
+
 		case 'g':
 		{
 			char regs[17 * 8 + 1]; // r0->r15, cpsr

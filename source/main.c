@@ -24,6 +24,7 @@ int accept_cback(int fd, struct client_ctx *ctx)
 		c->ack = 1;
 		c->pid = -1;
 		c->tid = -1;
+		c->_curr_thread_idx = 0;
 	}
 	else
 	{

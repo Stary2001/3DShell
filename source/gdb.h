@@ -16,6 +16,8 @@ typedef struct gdb_ctx
 	u16 stop_reason;
 	u16 stop_status;
 	u8 ack;
+
+	int _curr_thread_idx;
 } gdb_ctx;
 
 int gdb_do_packet(int fd, struct client_ctx *ctx);
