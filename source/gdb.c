@@ -177,7 +177,10 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		s32 pid = ctx->pid;
 		s32 tid = ctx->tid;
 		if(pid == -1) { pid = 0; }
-		if(tid == -1) { tid = 0; }
+		else if(tid == -1) 
+		{
+			ctx->tid = tid = ctx->proc->threads[0].tid; // default to the first thread.
+		}
 
 		snprintf(buf, 16, "QCp%x.%x", pid, tid);
 		send_packet(fd, buf, strlen(buf));
@@ -255,7 +258,7 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		for(i = ctx->_curr_thread_idx; i < ctx->proc->num_threads; i++)
 		{
 			printf("tid %08x\n", ctx->proc->threads[i].tid);
-			int len = snprintf(buff + off, 256 - off, "%x,", ctx->proc->threads[i].tid);
+			int len = snprintf(buff + off, 256 - off, "p%x.%x,", ctx->pid, ctx->proc->threads[i].tid);
 			if(off + len > 256)
 			{
 				ctx->_curr_thread_idx = i;
@@ -268,7 +271,7 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		ctx->_curr_thread_idx = i;
 		send_packet(fd, buff, off);
 
-		return 0; // stubbed
+		return 0;
 	}
 	else if(cmp(pkt_buf+1, "Rcmd") == 0)
 	{
@@ -323,6 +326,8 @@ int do_v_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			unsigned long pid = strtoul(pid_s, NULL, 16);
 			ctx->proc = proc_open(pid, FLAG_DEBUG); // todo: multiprocess stub
 			ctx->pid = pid;
+
+			proc_get_all_threads(ctx->proc);
 
 			ctx->stop_reason = STOP_ATTACH;
 			ctx->stop_status = 0;
@@ -398,11 +403,23 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 		case 'g':
 		{
+			scenic_thread_ctx t_ctx;
+			int r = thread_get_ctx(proc_get_thread(ctx->proc, ctx->tid), &t_ctx);
+			if(r < 0)
+			{
+				send_packet_prefix(fd, "01", 2, "E");
+				return 0;
+			}
+
 			char regs[17 * 8 + 1]; // r0->r15, cpsr
 			memset(regs, '0', 17*8);
 			regs[8*17] = 0;
 
+			encode(regs, &t_ctx, 17*4);
+
 			send_packet(fd, regs, strlen(regs));
+
+			return 0;
 		}
 		break;
 
@@ -454,17 +471,33 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		case 'H':
 			if(pkt_buf[1] == 'g')
 			{
-				if(ctx->pid == -1)
+				if(ctx->pid == -1) // todo: multiprocess stub!
 				{
 					send_packet(fd, "E01", strlen("E01"));
 				}
 				else
 				{
-					unsigned long tid = strtoul(pkt_buf + 2, NULL, 16);
+					char *pid_str = pkt_buf + 3; // skip 'Hgp'
+					char *pid_end = strchr(pid_str, '.');
+					if(!pid_end) { send_packet(fd, "E01", strlen("E01")); return 0; }
+					char *tid_str = pid_end + 1;
+
+					unsigned long pid = strtoul(pid_str, NULL, 16); // we dont even use this..
+					unsigned long tid = strtoul(tid_str, NULL, 16);
 					if(tid == 0)
 					{
-						tid = 1; // first thread. shh.
+						if(ctx->proc->num_threads != 0)
+						{
+							tid = ctx->proc->threads[0].tid;
+						}
+						else
+						{
+							tid = -1;
+						}
 					}
+
+					printf("switched to %i\n", tid);
+
 					ctx->tid = tid;
 					send_ok(fd);
 				}
