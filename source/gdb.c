@@ -180,7 +180,8 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		if(pid == -1) { pid = 0; }
 		else if(tid == -1) 
 		{
-			ctx->tid = tid = ctx->proc->threads[0].tid; // default to the first thread.
+			tid = ctx->proc->threads[0].tid; // default to the first thread.
+			ctx->tid = tid; // set the TID we use.
 		}
 
 		snprintf(buf, 16, "QCp%x.%x", pid, tid);
