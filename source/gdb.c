@@ -2,6 +2,7 @@
 #include <arpa/inet.h> // just for htons..
 #include "shell.h"
 #include "gdb.h"
+#include <scenic/debug.h>
 
 int encode(char *dst, char *src, int len) // length of source buffer
 {
@@ -325,6 +326,8 @@ int do_v_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 			unsigned long pid = strtoul(pid_s, NULL, 16);
 			ctx->proc = proc_open(pid, FLAG_DEBUG); // todo: multiprocess stub
+
+			debug_freeze(ctx->proc);
 			ctx->pid = pid;
 
 			proc_get_all_threads(ctx->proc);
@@ -403,8 +406,8 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 		case 'g':
 		{
-			scenic_thread_ctx t_ctx;
-			int r = thread_get_ctx(proc_get_thread(ctx->proc, ctx->tid), &t_ctx);
+			scenic_debug_thread_ctx t_ctx;
+			int r = debug_get_thread_ctx(proc_get_thread(ctx->proc, ctx->tid), &t_ctx);
 			if(r < 0)
 			{
 				send_packet_prefix(fd, "01", 2, "E");
@@ -418,6 +421,35 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			encode(regs, &t_ctx, 17*4);
 
 			send_packet(fd, regs, strlen(regs));
+
+			return 0;
+		}
+		break;
+
+		case 'G':
+		{
+			pkt_buf++;
+			pkt_len--;
+
+			scenic_thread *t = proc_get_thread(ctx->proc, ctx->tid);
+
+			scenic_debug_thread_ctx t_ctx;
+			int r = debug_get_thread_ctx(t, &t_ctx);
+			if(r < 0)
+			{
+				send_packet_prefix(fd, "01", 2, "E");
+				return 0;
+			}
+
+			decode(&t_ctx, pkt_buf, pkt_len/2);
+			r = debug_set_thread_ctx(t, &t_ctx);
+			if(r < 0)
+			{
+				send_packet_prefix(fd, "01", 2, "E");
+				return 0;
+			}
+
+			send_ok(fd);
 
 			return 0;
 		}
@@ -455,6 +487,31 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 				send_packet(fd, buf, sz * 2);
 			}
 		}
+		break;
+
+		case 'T': // is thread alive?
+		{
+			char *pid_str = pkt_buf + 1; // skip 'T'
+			char *pid_end = strchr(pid_str, '.');
+			if(!pid_end) { send_packet(fd, "E01", strlen("E01")); return 0; }
+			char *tid_str = pid_end + 1;
+
+			unsigned long pid = strtoul(pid_str, NULL, 16); // we dont even use this..
+			unsigned long tid = strtoul(tid_str, NULL, 16);
+
+			for(int i = 0; i < ctx->proc->num_threads; i++) // todo: multiprocess stub
+			{
+				if(ctx->proc->threads[i].tid == tid)
+				{
+					send_ok(fd);
+					return 0;
+				}
+			}
+
+			send_packet_prefix(fd, "01", 2, "E");
+			return 0;
+		}
+		break;
 
 		case 'v':
 		{
