@@ -131,6 +131,7 @@ int main(int argc, char **argv)
 	consoleInit(GFX_TOP, NULL);
 	printf("hello\n");
 
+	kproc_init();
 	debug_enable();
 
 	Thread sock = threadCreate(sock_thread, NULL, 0x4000, 0x30, 0, false);

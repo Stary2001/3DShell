@@ -3,6 +3,7 @@
 #include "shell.h"
 #include "gdb.h"
 #include <scenic/debug.h>
+#include <scenic/proc.h>
 
 int encode(char *dst, char *src, int len) // length of source buffer
 {
@@ -482,10 +483,20 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 				p++;
 				unsigned long sz = strtoul(p, NULL, 16);
 
-				char buf[256+1]; 
-				memset(buf, '0', 256);
-				buf[256] = 0;
-				send_packet(fd, buf, sz * 2);
+				char *tmp_buf = malloc(sz);
+				char *out_buf = malloc(sz * 2);
+				scenic_process *self = proc_open((u32)-1, FLAG_NONE); // self
+
+				if(dma_copy(tmp_buf, self, (void*)addr, ctx->proc, sz) < 0)
+				{
+					send_packet(fd, "E01", strlen("E01"));
+					return 0;
+				}
+
+				encode(out_buf, tmp_buf, sz);
+				send_packet(fd, out_buf, sz * 2);
+				free(tmp_buf);
+				free(out_buf);
 			}
 		}
 		break;
