@@ -21,4 +21,4 @@ typedef struct gdb_ctx
 } gdb_ctx;
 
 int gdb_do_packet(int fd, struct client_ctx *ctx);
-int gdb_shell_out(int fd, void *ctx, const char *s);
+int gdb_shell_out(int fd, void *ctx, const char *s, int len);

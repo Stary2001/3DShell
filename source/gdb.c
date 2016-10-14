@@ -90,14 +90,13 @@ int cmp(char *buf, const char *buff)
 	return strncmp(buf, buff, strlen(buff));
 }
 
-int gdb_shell_out(int fd, void *ctx, const char *s)
+char encode_buff[512];
+int gdb_shell_out(int fd, void *ctx, const char *s, int len)
 {
-	char encode_buff[512];
-	int len = strlen(s);
 	if(len > 256) { len = 256; }
-	encode(encode_buff, s, len);
 
-	send_packet_prefix(fd, encode_buff, strlen(encode_buff), "O");
+	encode(encode_buff, s, len);
+	send_packet_prefix(fd, encode_buff, len * 2, "O");
 }
 
 extern const char *target_xml;
