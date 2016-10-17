@@ -21,9 +21,9 @@ int accept_cback(int fd, struct client_ctx *ctx)
 		gdb_ctx *c = (gdb_ctx*)ctx->data;
 		c->shell.out = gdb_shell_out;
 		c->ack = 1;
-		c->pid = -1;
-		c->tid = -1;
-		c->_curr_thread_idx = 0;
+		c->curr_proc = NULL;
+		c->procs.head = c->procs.tail = NULL;
+
 	}
 	else
 	{

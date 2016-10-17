@@ -98,6 +98,93 @@ int gdb_shell_out(int fd, void *ctx, const char *s, int len)
 	send_packet_prefix(fd, encode_buff, len * 2, "O");
 }
 
+void gdb_add_proc(gdb_ctx *ctx, gdb_proc_ctx *p_ctx, u32 pid)
+{
+	proc_list_node *n = malloc(sizeof(proc_list_node));
+	n->c = p_ctx;
+	n->next = NULL;
+
+	if(ctx->procs.head == NULL) // need a new head
+	{
+		ctx->procs.head = n;
+		ctx->procs.tail = n;
+	}
+	else
+	{
+		ctx->procs.tail->next = n;
+		ctx->procs.tail = n;
+	}
+}
+
+void gdb_del_proc(gdb_ctx *ctx, u32 pid)
+{
+	if(ctx->procs.head == NULL) return;
+	gdb_proc_ctx *p = ctx->procs.head->c;
+
+	if(p->pid == pid)
+	{
+		ctx->procs.head = ctx->procs.head->next;
+		if(ctx->procs.head == NULL)
+		{
+			ctx->procs.tail = NULL;
+		}
+	}
+	else
+	{
+		proc_list_node *c = ctx->procs.head;
+		proc_list_node *old = NULL;
+
+		while(c != NULL && c->c->pid != pid)
+		{
+			old = c;
+			c = c->next;
+		}
+
+		if(c != NULL && old != NULL)
+		{
+			p = c->c;
+			old->next = c->next;
+		}
+
+		if(ctx->procs.tail == c)
+		{
+			ctx->procs.tail = old;
+		}
+	}
+
+	if(p != NULL)
+	{
+		proc_close(p->p);
+		free(p);
+	}
+}
+
+gdb_proc_ctx *gdb_get_proc(gdb_ctx *ctx, u32 pid)
+{
+	if(ctx->procs.head == NULL) return NULL;
+	proc_list_node *c = ctx->procs.head;
+	while(c != NULL && c->c->pid != pid)
+	{
+		c = c->next;
+	}
+	if(c == NULL) return NULL;
+	return c->c;
+}
+
+scenic_thread *gdb_get_thread(gdb_ctx *ctx, u32 pid, u32 tid)
+{
+	gdb_proc_ctx *p = gdb_get_proc(ctx, pid);
+	for(int i = 0; i < p->p->num_threads; i++)
+	{
+		if(p->p->threads[i].tid == tid)
+		{
+			return &p->p->threads[i];
+		}
+	}
+
+	return NULL;
+}
+
 extern const char *target_xml;
 extern const int target_xml_len;
 extern const char *arm_core_xml;
@@ -107,7 +194,7 @@ extern const int arm_vfp_xml_len;
 
 int do_features_xfer(struct gdb_ctx *ctx, int fd, const char *annex, const char *rest)
 {
-	if(ctx->pid == -1)
+	if(ctx->curr_proc == NULL)
 	{
 		send_packet(fd, "E01", strlen("E01"));
 		return 0;
@@ -174,16 +261,8 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	if(pkt_buf[1] == 'C') // qC = 'get current thread id'
 	{
 		char buf[16];
-		s32 pid = ctx->pid;
-		s32 tid = ctx->tid;
-		if(pid == -1) { pid = 0; }
-		else if(tid == -1) 
-		{
-			tid = ctx->proc->threads[0].tid; // default to the first thread.
-			ctx->tid = tid; // set the TID we use.
-		}
-
-		snprintf(buf, 16, "QCp%x.%x", pid, tid);
+		gdb_proc_ctx *p = ctx->curr_proc;
+		snprintf(buf, 16, "QCp%x.%x", p->pid, p->tid);
 		send_packet(fd, buf, strlen(buf));
 	}
 	else if(cmp(pkt_buf+1, "Attached") == 0)
@@ -223,19 +302,21 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	}
 	else if(cmp(pkt_buf+2, "ThreadInfo") == 0)
 	{
-		if(ctx->proc == NULL) // Not attached, error.
+		if(ctx->curr_proc == NULL) // Not attached, error.
 		{
 			send_packet_prefix(fd, "01", 2, "E");
 			return 0;
 		}
 
+		scenic_process *p = ctx->curr_proc->p;
+
 		if(pkt_buf[1] == 'f') // q*f*threadinfo
 		{
-			ctx->_curr_thread_idx = 0;
+			ctx->curr_proc->_curr_thread_idx = 0;
 		}
 		else
 		{
-			if(ctx->_curr_thread_idx == ctx->proc->num_threads)
+			if(ctx->curr_proc->_curr_thread_idx == p->num_threads)
 			{
 				send_packet(fd, "l", 1);
 				return 0;
@@ -246,30 +327,30 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		buff[0] = 'm';
 		int off = 1;
 
-		if(proc_get_all_threads(ctx->proc) < 0)  // todo: multiprocess stub
+		if(proc_get_all_threads(p) < 0)  // todo: multiprocess stub
 		{
 			printf("proc_get_all_threads failed!\n");
 			send_packet_prefix(fd, "01", 2, "E");
 			return 0;
 		}
 
-		printf("getting threads... %i -> %i\n", ctx->_curr_thread_idx, ctx->proc->num_threads);
+		printf("getting threads... %i -> %i\n", ctx->curr_proc->_curr_thread_idx, p->num_threads);
 
 		int i;
-		for(i = ctx->_curr_thread_idx; i < ctx->proc->num_threads; i++)
+		for(i = ctx->curr_proc->_curr_thread_idx; i < p->num_threads; i++)
 		{
-			printf("tid %08x\n", ctx->proc->threads[i].tid);
-			int len = snprintf(buff + off, 256 - off, "p%x.%x,", ctx->pid, ctx->proc->threads[i].tid);
+			printf("tid %08x\n", p->threads[i].tid);
+			int len = snprintf(buff + off, 256 - off, "p%x.%x,", p->pid, p->threads[i].tid);
 			if(off + len > 256)
 			{
-				ctx->_curr_thread_idx = i;
+				ctx->curr_proc->_curr_thread_idx = i;
 				break;
 			}
 			off += len;
 		}
 		off--; // Remove the final comma!
 
-		ctx->_curr_thread_idx = i;
+		ctx->curr_proc->_curr_thread_idx = i;
 		send_packet(fd, buff, off);
 
 		return 0;
@@ -325,18 +406,21 @@ int do_v_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			pid_s++;
 
 			unsigned long pid = strtoul(pid_s, NULL, 16);
-			ctx->proc = proc_open(pid, FLAG_DEBUG); // todo: multiprocess stub
 
-			debug_freeze(ctx->proc);
-			ctx->pid = pid;
+			scenic_process *p = proc_open(pid, FLAG_DEBUG);
+			debug_freeze(p);
+			proc_get_all_threads(p);
+			gdb_proc_ctx *p_ctx = malloc(sizeof(gdb_proc_ctx));
+			p_ctx->pid = pid;
+			p_ctx->tid = p->threads[0].tid;
+			p_ctx->p = p;
 
-			proc_get_all_threads(ctx->proc);
+			p_ctx->stop_reason = STOP_ATTACH;
+			p_ctx->stop_status = 0;
+			send_stop(fd, p_ctx);
 
-			ctx->stop_reason = STOP_ATTACH;
-			ctx->stop_status = 0;
-			send_stop(fd, ctx);
-
-			return 0;
+			gdb_add_proc(ctx, p_ctx, pid);
+			ctx->curr_proc = p_ctx;
 		}
 		else
 		{
@@ -351,24 +435,31 @@ int do_v_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 	return 0;
 }
 
-int send_stop(int fd, struct gdb_ctx *ctx)
+int send_stop(int fd, struct gdb_proc_ctx *p_ctx)
 {
 	const char *prefix;
-
-	switch(ctx->stop_reason)
-	{
-		case STOP_ATTACH:
-		case STOP_BREAK:
-			prefix = "S";
-		break;
-
-		default:
-			prefix = "W";
-		break;
-	}
-
 	char buf[3];
-	sprintf(buf, "%02x", ctx->stop_status);
+
+	if(p_ctx != NULL)
+	{
+		switch(p_ctx->stop_reason)
+		{
+			case STOP_ATTACH:
+			case STOP_BREAK:
+				prefix = "S";
+			break;
+
+			default:
+				prefix = "W";
+			break;
+		}
+		sprintf(buf, "%02x", p_ctx->stop_status);
+	}
+	else
+	{
+		prefix = "W";
+		sprintf(buf, "01");
+	}
 
 	send_packet_prefix(fd, buf, 2, prefix);
 }
@@ -385,29 +476,31 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		case 'D':
 		{
 			char *pid_s = strchr(pkt_buf, ';');
-			unsigned long pid = strtoul(pid_s, NULL, 16);
-
-			if(pid == NULL)
+			unsigned long pid = 0;
+			if(pid_s != NULL)
 			{
-				proc_close(ctx->proc);
-				ctx->proc = NULL;
+				pid = strtoul(pid_s, NULL, 16);
+				if(pid == ctx->curr_proc->pid)
+				{
+					ctx->curr_proc = NULL;
+				}
+				gdb_del_proc(ctx, pid);
 			}
 			else
 			{
-				// Multiprocess, stubbed.
-				proc_close(ctx->proc);
-				ctx->proc = NULL;
+				send_packet_prefix(fd, "01", 2, "E");
 			}
 
 			send_ok(fd);
 		}
-
 		break;
 
 		case 'g':
 		{
 			scenic_debug_thread_ctx t_ctx;
-			int r = debug_get_thread_ctx(proc_get_thread(ctx->proc, ctx->tid), &t_ctx);
+			scenic_thread *t = proc_get_thread(ctx->curr_proc->p, ctx->curr_proc->tid);
+			
+			int r = debug_get_thread_ctx(t, &t_ctx);
 			if(r < 0)
 			{
 				send_packet_prefix(fd, "01", 2, "E");
@@ -431,7 +524,7 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			pkt_buf++;
 			pkt_len--;
 
-			scenic_thread *t = proc_get_thread(ctx->proc, ctx->tid);
+			scenic_thread *t = proc_get_thread(ctx->curr_proc->p, ctx->curr_proc->tid);
 
 			scenic_debug_thread_ctx t_ctx;
 			int r = debug_get_thread_ctx(t, &t_ctx);
@@ -495,7 +588,7 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 				scenic_process *self = proc_open((u32)-1, FLAG_NONE); // self
 
-				if(dma_copy(self, tmp_buf, ctx->proc, addr, sz) < 0)
+				if(dma_copy(self, tmp_buf, ctx->curr_proc->p, addr, sz) < 0)
 				{
 					printf("dma copy failed!!\n");
 					send_packet(fd, "E01", strlen("E01"));
@@ -519,16 +612,13 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			if(!pid_end) { send_packet(fd, "E01", strlen("E01")); return 0; }
 			char *tid_str = pid_end + 1;
 
-			unsigned long pid = strtoul(pid_str, NULL, 16); // we dont even use this..
+			unsigned long pid = strtoul(pid_str, NULL, 16);
 			unsigned long tid = strtoul(tid_str, NULL, 16);
 
-			for(int i = 0; i < ctx->proc->num_threads; i++) // todo: multiprocess stub
+			if(gdb_get_thread(ctx, pid, tid) != NULL)
 			{
-				if(ctx->proc->threads[i].tid == tid)
-				{
-					send_ok(fd);
-					return 0;
-				}
+				send_ok(fd);
+				return 0;
 			}
 
 			send_packet_prefix(fd, "01", 2, "E");
@@ -538,20 +628,20 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 		case 'v':
 		{
-			do_v_pkt(ctx, fd, pkt_buf, pkt_len);
+			return do_v_pkt(ctx, fd, pkt_buf, pkt_len);
 		}
 		break;
 
 		case '?': // why'd it stop
 		{
-			send_stop(fd, ctx);
+			send_stop(fd, ctx->curr_proc);
 		}
 		break;
 
 		case 'H':
 			if(pkt_buf[1] == 'g')
 			{
-				if(ctx->pid == -1) // todo: multiprocess stub!
+				if(ctx->curr_proc == NULL)
 				{
 					send_packet(fd, "E01", strlen("E01"));
 				}
@@ -562,13 +652,15 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 					if(!pid_end) { send_packet(fd, "E01", strlen("E01")); return 0; }
 					char *tid_str = pid_end + 1;
 
+
 					unsigned long pid = strtoul(pid_str, NULL, 16); // we dont even use this..
 					unsigned long tid = strtoul(tid_str, NULL, 16);
+
 					if(tid == 0)
 					{
-						if(ctx->proc->num_threads != 0)
+						if(ctx->curr_proc->p->num_threads != 0)
 						{
-							tid = ctx->proc->threads[0].tid;
+							tid = ctx->curr_proc->p->threads[0].tid;
 						}
 						else
 						{
@@ -578,7 +670,7 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 					printf("switched to %i\n", tid);
 
-					ctx->tid = tid;
+					ctx->curr_proc->tid = tid;
 					send_ok(fd);
 				}
 			}
