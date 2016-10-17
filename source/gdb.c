@@ -1,5 +1,4 @@
 #include <3ds.h>
-#include <arpa/inet.h> // just for htons..
 #include "shell.h"
 #include "gdb.h"
 #include <scenic/debug.h>
@@ -477,17 +476,28 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			else 
 			{
 				*p = 0;
-				unsigned long addr = strtoul(pkt_buf + 2, NULL, 16);
+				unsigned long addr = strtoul(pkt_buf + 1, NULL, 16);
+
+				if(addr < 0x1000) // Just don't service requests near NULL.
+				{
+					send_packet(fd, "E01", strlen("E01"));
+					return 0;
+				}
+
 				*p = ',';
 				p++;
 				unsigned long sz = strtoul(p, NULL, 16);
 
 				char *tmp_buf = malloc(sz);
 				char *out_buf = malloc(sz * 2);
+				memset(tmp_buf, 0, sz);
+				memset(out_buf, 0, sz);
+
 				scenic_process *self = proc_open((u32)-1, FLAG_NONE); // self
 
-				if(dma_copy(tmp_buf, self, (void*)addr, ctx->proc, sz) < 0)
+				if(dma_copy(self, tmp_buf, ctx->proc, addr, sz) < 0)
 				{
+					printf("dma copy failed!!\n");
 					send_packet(fd, "E01", strlen("E01"));
 					return 0;
 				}
@@ -496,6 +506,8 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 				send_packet(fd, out_buf, sz * 2);
 				free(tmp_buf);
 				free(out_buf);
+				proc_close(self);
+				return 0;
 			}
 		}
 		break;

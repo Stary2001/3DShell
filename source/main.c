@@ -13,7 +13,6 @@ int accept_cback(int fd, struct client_ctx *ctx)
 	u8 type;
 	int i = recv(fd, &type, 1, MSG_PEEK);
 	printf("char: %c\n", type);
-	//svcSleepThread(4000000000ULL);
 
 	if(type == '+')
 	{
@@ -141,7 +140,7 @@ int main(int argc, char **argv)
 		hidScanInput();
 		u32 k = hidKeysDown();
 		if(k & KEY_START) break;
-		svcSleepThread(1000000); // Yield for a bit.
+		svcSleepThread(0); // Yield..
 	}
 
 	running = false;
