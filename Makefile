@@ -46,7 +46,7 @@ CFLAGS	:=	-g -Wall -O3 -mword-relocations \
 			-fomit-frame-pointer -ffast-math \
 			$(ARCH)
 
-LIBS	:= -lz -lctru -lm -lscenic
+LIBS	:= -lctru -lm -lscenic
 
 CFLAGS	+=	$(INCLUDE) -DARM11 -D_3DS -DARM_ARCH -w
 

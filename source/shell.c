@@ -3,6 +3,8 @@
 #include <scenic/proc.h>
 #include <scenic/kernel/kproc.h>
 #include <scenic/kernel/kmem.h>
+#include <scenic/debug.h>
+#include <scenic/custom_svc.h>
 #include "shell.h"
 #include "sock_util.h"
 
@@ -13,13 +15,12 @@ int ps_command(int fd, struct shell_ctx *ctx, int argc, char **argv)
 	u32 pids[64];
 	u32 n_pids;
 
-	Result r = svcGetProcessList(&n_pids, pids, 64);
+	Result r = fixed_svcGetProcessList(&n_pids, pids, 64);
 	if(r < 0)
 	{
 		return -1;
 	}
 
-	pids[0] = 0; // THANKS CTRULIB
 	shell_printf(fd, ctx, "got %i pids\n", n_pids);
 
 	char name[9];

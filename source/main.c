@@ -87,7 +87,6 @@ int data_cback(int fd, struct client_ctx *ctx)
 
 void sock_thread(void *arg)
 {
-	printf("hello\n");
 	acInit();
 
 	int soc_sz = 0x100000;

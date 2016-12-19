@@ -327,7 +327,7 @@ int do_query(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 		buff[0] = 'm';
 		int off = 1;
 
-		if(proc_get_all_threads(p) < 0)  // todo: multiprocess stub
+		if(proc_get_all_threads(p) < 0)
 		{
 			printf("proc_get_all_threads failed!\n");
 			send_packet_prefix(fd, "01", 2, "E");
@@ -560,7 +560,6 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 
 		case 'm':
 		{
-			printf("m: %s\n", pkt_buf);
 			char *p = strchr(pkt_buf, ',');
 			if(p == NULL)
 			{
@@ -587,6 +586,8 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 				memset(out_buf, 0, sz);
 
 				scenic_process *self = proc_open((u32)-1, FLAG_NONE); // self
+
+				//printf("reading %x -> %x\n", addr, addr+sz - 1);
 
 				if(dma_copy(self, tmp_buf, ctx->curr_proc->p, addr, sz) < 0)
 				{
@@ -678,6 +679,48 @@ int parse_pkt(struct gdb_ctx *ctx, int fd, char *pkt_buf, size_t pkt_len)
 			{
 				return -1; // intentionally refuse this packet, it's bad
 			}
+		break;
+
+		case 'Z':
+		case 'z':
+		{
+			bool enable = pkt_buf[0] == 'Z';
+			char type = pkt_buf[1];
+			pkt_buf+=3; // skip Zn,
+
+			if(type == '0')
+			{
+				char *addr_s = pkt_buf;
+				char *addr_end = strchr(addr_s, ',');
+				*addr_end = 0;
+				const char *kind = addr_end+1;
+
+				unsigned long addr = strtoul(addr_s, NULL, 16);
+				printf("bkpt at %08x\n", addr);
+				int32_t n = 0;
+				if(enable)
+				{
+					if(debug_add_breakpoint(ctx->curr_proc, addr) < 0)
+					{
+						return -1;
+					}
+					else
+					{
+						send_ok(fd);
+					}
+				}
+				else
+				{
+					debug_remove_breakpoint(ctx->curr_proc, addr);
+					send_ok(fd);
+				}
+			}
+			else
+			{
+				printf(":(\n");
+				return -1;
+			}
+		}
 		break;
 
 		case '!':
