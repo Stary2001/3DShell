@@ -85,6 +85,22 @@ int data_cback(int fd, struct client_ctx *ctx)
 	}
 }
 
+void wait_for_wifi()
+{
+	u32 wifi = 0;
+	Result res = 0;
+
+	while(!wifi && (res == 0 || res == 0xE0A09D2E))
+	{
+		res = ACU_GetWifiStatus(&wifi);
+		if(res != 0)
+		{
+			wifi = 0;
+		}
+		svcSleepThread(10000000ULL);
+	}
+}
+
 void sock_thread(void *arg)
 {
 	acInit();
@@ -99,6 +115,8 @@ void sock_thread(void *arg)
 
 	socInit(soc_buff, soc_sz);
   	int r = 0;
+
+  	wait_for_wifi();
 
   	struct server_ctx *serv = server_bind(gethostid(), 1111);
   	printf("got server %08x\n", serv);
@@ -125,28 +143,25 @@ void sock_thread(void *arg)
 
 int main(int argc, char **argv)
 {
-	gfxInitDefault();
-	consoleInit(GFX_TOP, NULL);
-	printf("hello\n");
+	// debugging... this should crash
+	int a = *(int*)0xdead;
 
-	kproc_init();
+	fsInit();
+	sdmcInit();
+	FILE *logfile = fopen("log.txt", "w");
+	fprintf(logfile, "hi mom\n");
+	fflush(logfile);
+	fclose(logfile);
+
+	/*kproc_init();
 	debug_enable();
-
-	Thread sock = threadCreate(sock_thread, NULL, 0x4000, 0x30, 0, false);
-
-	while(aptMainLoop())
-	{
-		hidScanInput();
-		u32 k = hidKeysDown();
-		if(k & KEY_START) break;
-		svcSleepThread(0); // Yield..
-	}
-
-	running = false;
+	Thread sock = threadCreate(sock_thread, NULL, 0x1000, 0x30, 1, false);
 	threadJoin(sock, U64_MAX);
-	threadFree(sock);
+	threadFree(sock);*/
+	fsExit();
+	sdmcExit();
 
-	gfxExit();
+	svcExitProcess(0);
 
 	return 0;
 }
